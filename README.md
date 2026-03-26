@@ -1,116 +1,91 @@
-# Fish S2 Pro — Modal Deployment
+# Fish S2 Pro Voice Agent
 
-## What
+Real-time conversational voice AI built with [Pipecat](https://github.com/pipecat-ai/pipecat).
 
-Serverless Fish Audio S2 Pro TTS running on Modal. You pay only for GPU time when generating speech. No servers, no maintenance, scales to zero.
+## Pipeline
 
-## Cost
+```
+Mic → Whisper STT → Smart Turn v3 → OpenRouter LLM → Fish S2 Pro TTS → Speakers
+```
 
-| Usage Level | GPU | Estimated Monthly |
-|-------------|-----|-------------------|
-| Light (30 min/day) | A10G | ~$8-12 |
-| Medium (2h/day) | A10G | ~$30-40 |
-| Heavy (8h/day) | A10G | ~$100 |
+- **STT:** Faster-Whisper (local, GPU) or Deepgram (cloud)
+- **Turn Detection:** Smart Turn v3 — knows when you're done vs. thinking
+- **LLM:** OpenRouter (MiMo-V2-Pro, Claude, GPT, etc.)
+- **TTS:** Fish Audio S2 Pro — SOTA expressive voice with emotion tags
+- **Transport:** Daily WebRTC or SmallWebRTC (P2P, no API keys)
 
-The A10G (24GB) is $0.000306/second on Modal.
+## Quick Start
 
-## Setup
+### 1. Install
 
-### 1. Install Modal
+```bash
+git clone https://github.com/ArisMontclair/modal-fish-s2-pro-deployment.git
+cd modal-fish-s2-pro-deployment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+### 2. Configure
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+### 3. Run Locally (SmallWebRTC, no API keys needed)
+
+```bash
+python bot.py
+```
+
+Open `http://localhost:7860` in your browser. Click connect. Talk.
+
+### 4. Deploy to Modal
 
 ```bash
 pip install modal
 modal setup
+modal deploy bot.py
 ```
 
-### 2. Deploy
+## Environment Variables
 
-```bash
-modal deploy modal_app.py
-```
-
-First deploy takes ~5-10 minutes (downloads 8GB model weights into persistent volume). Subsequent deploys are instant — weights are cached.
-
-### 3. Your endpoint
-
-After deploy, Modal gives you:
-```
-https://your-workspace--fish-s2-pro-tts-serve.modal.run
-```
-
-## API Usage
-
-### Generate Speech
-
-```bash
-curl -X POST https://your-endpoint/v1/tts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Hello! [excited] This is amazing!",
-    "format": "wav"
-  }' \
-  --output speech.wav
-```
-
-### With Voice Cloning
-
-Upload a reference audio (10-30 seconds of the target voice):
-
-```bash
-curl -X POST https://your-endpoint/v1/tts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "This is my cloned voice.",
-    "reference_audio_base64": "'"$(base64 -w0 reference.wav)"'",
-    "format": "wav"
-  }' \
-  --output cloned.wav
-```
-
-### OpenAI-Compatible Endpoint
-
-Fish Speech exposes an OpenAI-compatible API:
-
-```bash
-curl -X POST https://your-endpoint/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "fish-speech-s2-pro",
-    "input": "Hello world!",
-    "voice": "alloy",
-    "response_format": "wav"
-  }' \
-  --output speech.wav
-```
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` | Yes | OpenRouter API key for LLM |
+| `FISH_API_KEY` | Yes | Fish Audio API key for TTS |
+| `DAILY_API_KEY` | If using Daily | Daily.co API key |
+| `DEEPGRAM_API_KEY` | Optional | Use Deepgram STT instead of local Whisper |
+| `WHISPER_MODEL` | Optional | Whisper model size (default: large-v3) |
 
 ## Emotion Tags
 
-Embed in text for expressive speech:
+Embed in the LLM system prompt to make the assistant use expressive speech:
 
-- `[whisper]` `[excited]` `[angry]` `[laughing]`
-- `[sad]` `[shocked]` `[pause]` `[emphasis]`
-- `[sigh]` `[shouting]` `[low voice]` `[singing]`
-
-Full list: [Fish Audio docs](https://speech.fish.audio/inference/)
-
-## Cold Starts
-
-First request after idle: **~15-30 seconds** (model loading).
-Subsequent requests (warm): **~100ms** TTFA, **RTF ~0.3x**.
-
-To eliminate cold starts, uncomment `keep_warm=1` in `modal_app.py` (adds ~$15-20/month).
-
-## Local Testing
-
-```bash
-modal serve modal_app.py  # hot-reload dev mode
+```
+Use emotion tags in your speech output: [whisper] [excited] [angry] [laughing] [sad] [pause] [emphasis] [sigh]
 ```
 
 ## Architecture
 
-```
-Your App → HTTPS → Modal Edge → A10G GPU → Fish S2 Pro → Audio
-                                      │
-                              Model cached in Volume
-                              (downloaded once)
-```
+- **bot.py** — Main Pipecat pipeline (CPU-only, lightweight)
+- **Whisper** runs on GPU via faster-whisper (included in pipeline)
+- **Smart Turn v3** runs on CPU (bundled with Pipecat)
+- **Fish S2 Pro** via Fish Audio API (no local GPU needed for TTS)
+- **LLM** via OpenRouter API
+
+## Cost (Modal)
+
+| Component | GPU? | Cost |
+|-----------|------|------|
+| Bot container (pipeline) | CPU only | ~$0.0001/sec |
+| Whisper STT | T4 (optional) | ~$0.0002/sec |
+| Fish S2 Pro TTS | Via API | ~$0.015/1K chars |
+| OpenRouter LLM | Via API | Model-dependent |
+
+Estimated for 30 min/day conversation: **~$5-15/month**
+
+## License
+
+MIT (code). Fish S2 Pro model weights subject to [Fish Audio Research License](https://github.com/fishaudio/fish-speech/blob/main/LICENSE).

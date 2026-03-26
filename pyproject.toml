@@ -1,12 +1,10 @@
 [project]
 name = "modal-fish-s2-pro"
-version = "0.1.0"
-description = "Serverless Fish Audio S2 Pro TTS on Modal"
+version = "0.2.0"
+description = "Real-time voice AI agent: Pipecat + Whisper + Smart Turn + OpenRouter + Fish S2 Pro"
 requires-python = ">=3.10"
 dependencies = [
-    "modal>=0.73",
+    "pipecat-ai[whisper,openrouter,fish,daily,silero,local-smart-turn]>=0.0.70",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
 ]
-
-[project.scripts]
-deploy = "modal deploy modal_app.py"
-serve = "modal serve modal_app.py"
