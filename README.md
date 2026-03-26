@@ -1,22 +1,23 @@
 # Fish S2 Pro Voice Agent
 
-Real-time conversational voice AI built with [Pipecat](https://github.com/pipecat-ai/pipecat).
+Real-time conversational voice AI. Talk to it like a phone call — no wake words, no typing.
 
-## Pipeline
+**Pipeline:** Your voice → Whisper (STT) → Smart Turn (knows when you're done) → OpenRouter (brain) → Fish S2 Pro (voice) → Your speakers
 
-```
-Mic → Whisper STT → Smart Turn v3 → OpenRouter LLM → Fish S2 Pro TTS → Speakers
-```
+---
 
-- **STT:** Faster-Whisper (local, GPU) or Deepgram (cloud)
-- **Turn Detection:** Smart Turn v3 — knows when you're done vs. thinking
-- **LLM:** OpenRouter (MiMo-V2-Pro, Claude, GPT, etc.)
-- **TTS:** Fish Audio S2 Pro — SOTA expressive voice with emotion tags
-- **Transport:** Daily WebRTC or SmallWebRTC (P2P, no API keys)
+## SETUP
 
-## Quick Start
+### 1. Get API Keys
 
-### 1. Install
+You need two:
+
+| Key | Where to get it | Free? |
+|-----|----------------|-------|
+| **OpenRouter** | https://openrouter.ai/settings/keys | Pay per use (pennies) |
+| **Fish Audio** | https://fish.audio/settings/api | Free tier available |
+
+### 2. Install
 
 ```bash
 git clone https://github.com/ArisMontclair/modal-fish-s2-pro-deployment.git
@@ -26,66 +27,98 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Configure
+### 3. Configure
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
 ```
 
-### 3. Run Locally (SmallWebRTC, no API keys needed)
+Open `.env` in a text editor and fill in:
+
+```
+OPENROUTER_API_KEY=sk-or-v1-paste-your-key-here
+FISH_API_KEY=paste-your-key-here
+```
+
+Save. Done.
+
+---
+
+## USAGE
+
+### Start the voice agent
 
 ```bash
+source .venv/bin/activate   # if not already active
 python bot.py
 ```
 
-Open `http://localhost:7860` in your browser. Click connect. Talk.
+This starts a local server. Open **http://localhost:7860** in your browser.
 
-### 4. Deploy to Modal
+### Talk to it
+
+1. Click **"Connect"** in the browser
+2. Allow microphone access when prompted
+3. **Start talking** — it listens automatically
+4. **Pause when done** — Smart Turn detects you're finished (handles long pauses, thinking time)
+5. **Listen** — it responds with voice through your speakers
+
+That's it. It's like a phone call.
+
+### Change the voice
+
+Edit `.env`:
+
+```
+FISH_VOICE_ID=abc123-reference-id
+```
+
+Get a voice ID from https://fish.audio → My Voices → copy the ID. Or leave it blank for the default voice.
+
+### Change the LLM model
+
+Edit `.env`:
+
+```
+LLM_MODEL=xiaomi/mimo-v2-pro          # default, good & cheap
+LLM_MODEL=anthropic/claude-sonnet-4-20250514  # smarter, costs more
+LLM_MODEL=openai/gpt-4o               # alternative
+```
+
+Any model on https://openrouter.ai works.
+
+### Use emotion in speech
+
+The AI automatically uses emotion tags for expressive speech. Examples it might say:
+
+- "That's **[excited]** amazing!"
+- "**[whisper]** I have a secret."
+- "**[sigh]** I don't think that's going to work."
+
+You can also ask it: "Say that more excited" or "whisper the next part."
+
+---
+
+## DEPLOY ON MODAL (optional)
+
+For always-on access from anywhere (not just localhost):
 
 ```bash
 pip install modal
-modal setup
-modal deploy bot.py
+modal setup              # connect to Modal account (free to sign up)
+modal deploy bot.py      # deploys, gives you a public URL
 ```
 
-## Environment Variables
+Cost: ~$5-15/month for 30 min/day usage. Only charged when someone is talking.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENROUTER_API_KEY` | Yes | OpenRouter API key for LLM |
-| `FISH_API_KEY` | Yes | Fish Audio API key for TTS |
-| `DAILY_API_KEY` | If using Daily | Daily.co API key |
-| `DEEPGRAM_API_KEY` | Optional | Use Deepgram STT instead of local Whisper |
-| `WHISPER_MODEL` | Optional | Whisper model size (default: large-v3) |
+---
 
-## Emotion Tags
+## TROUBLESHOOTING
 
-Embed in the LLM system prompt to make the assistant use expressive speech:
-
-```
-Use emotion tags in your speech output: [whisper] [excited] [angry] [laughing] [sad] [pause] [emphasis] [sigh]
-```
-
-## Architecture
-
-- **bot.py** — Main Pipecat pipeline (CPU-only, lightweight)
-- **Whisper** runs on GPU via faster-whisper (included in pipeline)
-- **Smart Turn v3** runs on CPU (bundled with Pipecat)
-- **Fish S2 Pro** via Fish Audio API (no local GPU needed for TTS)
-- **LLM** via OpenRouter API
-
-## Cost (Modal)
-
-| Component | GPU? | Cost |
-|-----------|------|------|
-| Bot container (pipeline) | CPU only | ~$0.0001/sec |
-| Whisper STT | T4 (optional) | ~$0.0002/sec |
-| Fish S2 Pro TTS | Via API | ~$0.015/1K chars |
-| OpenRouter LLM | Via API | Model-dependent |
-
-Estimated for 30 min/day conversation: **~$5-15/month**
-
-## License
-
-MIT (code). Fish S2 Pro model weights subject to [Fish Audio Research License](https://github.com/fishaudio/fish-speech/blob/main/LICENSE).
+| Problem | Fix |
+|---------|-----|
+| "No module named pipecat" | Run `pip install -e .` again |
+| No sound in browser | Check browser mic/speaker permissions |
+| Bot doesn't respond | Check `.env` has valid API keys |
+| Slow first response | Whisper downloads model on first run (~3GB). Wait. |
+| Bot interrupts you | Smart Turn might need tuning. Edit `bot.py`, adjust VAD params |
