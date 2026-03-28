@@ -1,4 +1,4 @@
-.PHONY: setup run deploy-tts deploy-bot deploy
+.PHONY: setup run docker-build docker-up docker-down deploy-stt deploy-tts deploy
 
 setup:
 	python3 -m venv .venv
@@ -12,13 +12,21 @@ setup:
 run:
 	python bot.py
 
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+deploy-stt:
+	modal deploy stt_server.py
+
 deploy-tts:
-	modal deploy fish_speech_server.py
+	modal deploy tts_server.py
 
-deploy-bot:
-	modal deploy bot.py
-
-deploy: deploy-tts deploy-bot
+deploy-modal: deploy-stt deploy-tts
 	@echo ""
-	@echo "Both Fish Speech TTS server and bot deployed."
-	@echo "Update FISH_SPEECH_URL in .env with the Modal TTS endpoint."
+	@echo "Modal GPU services deployed. Update .env with the URLs."

@@ -1,6 +1,13 @@
+FROM node:22-slim AS openclaw
+RUN npm install -g openclaw@latest
+
 FROM python:3.12-slim
 
 WORKDIR /app
+
+# Copy OpenClaw CLI from node stage
+COPY --from=openclaw /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=openclaw /usr/local/bin/openclaw /usr/local/bin/openclaw
 
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \

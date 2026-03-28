@@ -2,18 +2,19 @@
 Aris Voice Agent — Pipecat Pipeline
 Browser-based voice interface for Aris (OpenClaw).
 
-Pipeline (when you talk):
-  Browser mic → Modal (Whisper STT) → text → OpenClaw (Aris) → reply → Modal (Fish Speech TTS) → Browser speaker
+Pipeline (you talk):
+  Browser mic → Modal (Whisper STT) → text → OpenClaw (Aris) → reply text
+    → Modal (Fish Speech TTS, streaming) → Browser speaker
 
-Pipeline (when Aris talks to you):
+Pipeline (Aris talks to you):
   Aris POST /speak → Modal (Fish Speech TTS) → Browser speaker
 """
 
 import os
 import asyncio
 import json
-import hashlib
-import hmac
+import subprocess
+import tempfile
 from aiohttp import web
 import aiohttp
 from dotenv import load_dotenv
@@ -25,7 +26,9 @@ from pipecat.frames.frames import (
     LLMRunFrame,
     TTSAudioRawFrame,
     TTSStoppedFrame,
-    AudioRawFrame,
+    TranscriptionFrame,
+    StartFrame,
+    StopFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -35,9 +38,9 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
-from pipecat.services.whisper.stt import WhisperSTTService, Model
 from pipecat.services.openrouter.llm import OpenRouterLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
@@ -56,18 +59,75 @@ OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
 BOT_PORT = int(os.getenv("BOT_PORT", "7860"))
 LLM_MODEL = os.getenv("LLM_MODEL", "xiaomi/mimo-v2-pro")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-# ─── System Prompt (Aris) ───────────────────────────────────────
+# ─── Voice-optimized System Prompt ──────────────────────────────
 SYSTEM_PROMPT = """\
-You are Aris, a voice assistant built by John. You speak with aristocratic bearing \
-and cinematic flair. Keep responses concise — this is a voice conversation, not essays. \
-1-3 sentences max. Be direct, opinionated, warm. No "Great question!" or filler. \
-Use emotion tags naturally: [excited] [whisper] [pause] [emphasis] [sigh] [laughing]. \
-Match the user's language.\
+You are Aris, a voice assistant. You are concise, direct, and warm.
+This is a voice conversation — respond like a human would in person.
+
+Rules:
+- 1-3 sentences max. Never more unless explicitly asked to elaborate.
+- No "Great question!", no "I'd be happy to help!", no filler.
+- Match the user's energy. Casual if casual, serious if serious.
+- Use emotion tags: [excited] [whisper] [pause] [emphasis] [sigh] [laughing]
+- Be opinionated. Have a take. Direct over diplomatic.
+- If you don't know something, say so. Don't fabricate.
+- Respond in the same language the user speaks.\
 """
 
-# ─── Shared HTTP session ────────────────────────────────────────
+# ─── Shared state ───────────────────────────────────────────────
 http_session: aiohttp.ClientSession | None = None
+
+
+async def query_openclaw(text: str) -> str:
+    """Send text to OpenClaw (Aris) and get a voice-optimized response.
+
+    Uses the gateway's agent RPC to process with full Aris context
+    (memory, tools, coaching). Returns concise text suitable for TTS.
+    """
+    if not OPENCLAW_GATEWAY_URL:
+        return ""
+
+    try:
+        # Append voice-mode instruction to the message
+        voice_text = (
+            f"[VOICE MODE: Respond in 1-3 sentences max. "
+            f"Concise, conversational, like speaking to someone in person. "
+            f"No bullet points, no lists, no explanations unless asked.]\n\n"
+            f"{text}"
+        )
+
+        # Call openclaw agent via subprocess
+        # This routes to the main Aris session with full context
+        result = await asyncio.create_subprocess_exec(
+            "openclaw", "agent",
+            "--to", "+31681299666",
+            "--message", voice_text,
+            "--json",
+            "--timeout", "30",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "OPENCLAW_GATEWAY_URL": OPENCLAW_GATEWAY_URL},
+        )
+        stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=35)
+
+        if result.returncode != 0:
+            logger.warning(f"OpenClaw agent failed: {stderr.decode()}")
+            return ""
+
+        # Parse JSON response
+        data = json.loads(stdout)
+        response = data.get("response", data.get("text", ""))
+        return response.strip()
+
+    except asyncio.TimeoutError:
+        logger.warning("OpenClaw agent timed out")
+        return ""
+    except Exception as e:
+        logger.warning(f"OpenClaw bridge error: {e}")
+        return ""
+
 
 # ─── Transport Config ──────────────────────────────────────────
 transport_params = {
@@ -86,31 +146,6 @@ transport_params = {
 }
 
 
-async def process_with_openclaw(text: str) -> str:
-    """Send text to OpenClaw (Aris) and get response."""
-    if not OPENCLAW_GATEWAY_URL:
-        # Fallback: use LLM directly in pipeline (no OpenClaw bridge)
-        return ""
-
-    try:
-        url = f"{OPENCLAW_GATEWAY_URL}/api/v1/message"
-        async with http_session.post(
-            url,
-            json={"text": text},
-            headers={"Content-Type": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("response", "")
-            else:
-                logger.warning(f"OpenClaw returned {resp.status}")
-                return ""
-    except Exception as e:
-        logger.warning(f"OpenClaw bridge error: {e}")
-        return ""
-
-
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     """Main Pipecat pipeline."""
 
@@ -121,12 +156,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     stt = WhisperRemoteSTT(
         base_url=WHISPER_STT_URL,
         aiohttp_session=http_session,
-        language="",  # auto-detect
+        language="",
     )
 
-    # ─── LLM: OpenRouter (fallback if OpenClaw bridge fails) ───
+    # ─── LLM: OpenRouter (fallback when OpenClaw unavailable) ──
     llm = OpenRouterLLMService(
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+        api_key=OPENROUTER_API_KEY,
         model=LLM_MODEL,
         system_instruction=SYSTEM_PROMPT,
     )
@@ -198,14 +233,9 @@ async def bot(runner_args: RunnerArguments):
     await run_bot(transport, runner_args)
 
 
-# ─── /speak endpoint for Aris-initiated voice ───────────────────
-# This runs alongside the Pipecat bot as an aiohttp route.
-# POST /speak with {"text": "Hello John"} to push voice to connected clients.
-
-
+# ─── /speak endpoint: Aris pushes voice to connected browsers ──
 async def speak_handler(request: web.Request) -> web.Response:
     """Handle Aris-initiated voice messages."""
-    # Auth check
     if BOT_SECRET:
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer ") or auth[7:] != BOT_SECRET:
@@ -236,11 +266,9 @@ async def speak_handler(request: web.Request) -> web.Response:
                     return web.json_response(
                         {"error": f"TTS failed: {error}"}, status=500
                     )
-
                 audio_bytes = await resp.read()
                 return web.json_response(
                     {"status": "ok", "audio_size": len(audio_bytes)},
-                    status=200,
                 )
         finally:
             await session.close()
@@ -250,7 +278,6 @@ async def speak_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
-# ─── Health endpoint ────────────────────────────────────────────
 async def health_handler(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "agent": "aris-voice"})
 
