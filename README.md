@@ -1,8 +1,10 @@
-# Fish S2 Pro Voice Agent
+# Fish S2 Pro Voice Agent (Self-Hosted)
 
 Real-time conversational voice AI. Talk to it like a phone call — no wake words, no typing.
 
-**Pipeline:** Your voice → Whisper (STT) → Smart Turn (knows when you're done) → OpenRouter (brain) → Fish S2 Pro (voice) → Your speakers
+**Pipeline:** Your voice → Whisper (STT) → Smart Turn (knows when you're done) → OpenRouter (brain) → **Self-Hosted Fish S2 Pro** (voice) → Your speakers
+
+**Zero cloud TTS fees.** The Fish Speech S2 Pro model runs on your own GPU — no API keys, no usage limits.
 
 ---
 
@@ -10,12 +12,13 @@ Real-time conversational voice AI. Talk to it like a phone call — no wake word
 
 ### 1. Get API Keys
 
-You need two:
+You only need one key:
 
 | Key | Where to get it | Free? |
 |-----|----------------|-------|
 | **OpenRouter** | https://openrouter.ai/settings/keys | Pay per use (pennies) |
-| **Fish Audio** | https://fish.audio/settings/api | Free tier available |
+
+No Fish Audio API key needed — the TTS runs on your own infrastructure.
 
 ### 2. Install
 
@@ -33,11 +36,11 @@ pip install -e .
 cp .env.example .env
 ```
 
-Open `.env` in a text editor and fill in:
+Open `.env` and fill in:
 
 ```
 OPENROUTER_API_KEY=sk-or-v1-paste-your-key-here
-FISH_API_KEY=paste-your-key-here
+FISH_SPEECH_URL=http://localhost:8080     # or your Modal URL after deploy
 ```
 
 Save. Done.
@@ -46,70 +49,92 @@ Save. Done.
 
 ## USAGE
 
-### Start the voice agent
+### Option A: Local (needs a GPU)
+
+**Terminal 1 — Start Fish Speech TTS server:**
 
 ```bash
-source .venv/bin/activate   # if not already active
+# Clone and run the official Fish Speech server
+git clone https://github.com/fishaudio/fish-speech.git
+cd fish-speech
+pip install -e ".[server]"
+python tools/api_server.py \
+  --llama-checkpoint-path checkpoints/s2-pro \
+  --decoder-checkpoint-path checkpoints/s2-pro/codec.pth \
+  --listen 0.0.0.0:8080 --half
+```
+
+**Terminal 2 — Start the voice agent:**
+
+```bash
+cd modal-fish-s2-pro-deployment
+source .venv/bin/activate
 python bot.py
 ```
 
-This starts a local server. Open **http://localhost:7860** in your browser.
+Open **http://localhost:7860** in your browser. Click Connect. Talk.
 
-### Talk to it
+### Option B: Modal (GPU in the cloud, no local hardware needed)
 
-1. Click **"Connect"** in the browser
-2. Allow microphone access when prompted
-3. **Start talking** — it listens automatically
-4. **Pause when done** — Smart Turn detects you're finished (handles long pauses, thinking time)
-5. **Listen** — it responds with voice through your speakers
-
-That's it. It's like a phone call.
-
-### Change the voice
-
-Edit `.env`:
-
-```
-FISH_VOICE_ID=abc123-reference-id
-```
-
-Get a voice ID from https://fish.audio → My Voices → copy the ID. Or leave it blank for the default voice.
-
-### Change the LLM model
-
-Edit `.env`:
-
-```
-LLM_MODEL=xiaomi/mimo-v2-pro          # default, good & cheap
-LLM_MODEL=anthropic/claude-sonnet-4-20250514  # smarter, costs more
-LLM_MODEL=openai/gpt-4o               # alternative
-```
-
-Any model on https://openrouter.ai works.
-
-### Use emotion in speech
-
-The AI automatically uses emotion tags for expressive speech. Examples it might say:
-
-- "That's **[excited]** amazing!"
-- "**[whisper]** I have a secret."
-- "**[sigh]** I don't think that's going to work."
-
-You can also ask it: "Say that more excited" or "whisper the next part."
-
----
-
-## DEPLOY ON MODAL (optional)
-
-For always-on access from anywhere (not just localhost):
+**1. Install Modal:**
 
 ```bash
 pip install modal
-modal setup              # connect to Modal account (free to sign up)
-modal deploy bot.py      # deploys, gives you a public URL
+modal setup
 ```
 
-Cost: ~$5-15/month for 30 min/day usage. Only charged when someone is talking.
+**2. Deploy the Fish Speech TTS server:**
+
+```bash
+modal deploy fish_speech_server.py
+```
+
+This gives you a URL like `https://your-org--fish-speech-tts-fish-speech-server.modal.run`
+
+**3. Update `.env`:**
+
+```
+FISH_SPEECH_URL=https://your-org--fish-speech-tts-fish-speech-server.modal.run
+```
+
+**4. Deploy the bot (or run locally):**
+
+```bash
+# Either deploy to Modal...
+modal deploy bot.py
+
+# ...or run locally (connects to Modal-hosted TTS)
+python bot.py
+```
+
+**Modal costs:** ~$0.80/hour for A10G GPU. Only charged when someone is talking (with 5-min warm-up).
+
+---
+
+## ARCHITECTURE
+
+```
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐
+│   Browser   │────▶│   Pipecat   │────▶│   OpenRouter │     │  Fish Speech S2 Pro │
+│  (WebRTC)   │     │  Bot Agent  │     │     LLM      │     │  (Self-Hosted GPU)  │
+│  mic+speaker│◀────│  (STT+Turn) │◀────│              │────▶│    POST /v1/tts     │
+└─────────────┘     └─────────────┘     └──────────────┘     └─────────────────────┘
+                            │                                          │
+                            │            HTTP (no cloud API)           │
+                            └──────────────────────────────────────────┘
+```
+
+## CHANGELOG
+
+### v0.3.0 — Self-Hosted TTS
+- Replaced Fish Audio cloud API with self-hosted Fish Speech S2 Pro
+- Added `fish_speech_tts.py` — custom Pipecat TTS service (HTTP)
+- Added `fish_speech_server.py` — Modal deployment for TTS server
+- Removed `FISH_API_KEY` dependency
+- Added `FISH_SPEECH_URL` env var
+
+### v0.2.0 — Pipecat Rebuild
+- Full Pipecat pipeline with Smart Turn v3
 
 ---
 
@@ -118,7 +143,7 @@ Cost: ~$5-15/month for 30 min/day usage. Only charged when someone is talking.
 | Problem | Fix |
 |---------|-----|
 | "No module named pipecat" | Run `pip install -e .` again |
+| TTS connection refused | Fish Speech server not running. Check `FISH_SPEECH_URL` |
+| Slow TTS | First request downloads model (~8GB). Wait. Or use `--compile` flag |
+| Out of memory on Modal | S2 Pro needs ~12GB VRAM. A10G (24GB) is sufficient. |
 | No sound in browser | Check browser mic/speaker permissions |
-| Bot doesn't respond | Check `.env` has valid API keys |
-| Slow first response | Whisper downloads model on first run (~3GB). Wait. |
-| Bot interrupts you | Smart Turn might need tuning. Edit `bot.py`, adjust VAD params |

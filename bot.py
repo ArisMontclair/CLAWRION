@@ -1,11 +1,12 @@
 """
-Fish S2 Pro Voice Agent — Pipecat Pipeline
+Fish S2 Pro Voice Agent — Pipecat Pipeline (Self-Hosted TTS)
 Real-time conversational voice AI with Smart Turn detection.
 
-Pipeline: Mic → Whisper STT → Smart Turn v3 → OpenRouter LLM → Fish S2 TTS → Speakers
+Pipeline: Mic → Whisper STT → Smart Turn v3 → OpenRouter LLM → Self-Hosted Fish S2 Pro → Speakers
 """
 
 import os
+import aiohttp
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -24,11 +25,12 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.whisper.stt import WhisperSTTService, Model
 from pipecat.services.openrouter.llm import OpenRouterLLMService
-from pipecat.services.fish.audio.tts import FishAudioTTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+from fish_speech_tts import FishSpeechSelfHostedTTS
 
 load_dotenv(override=True)
 
@@ -68,6 +70,9 @@ transport_params = {
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     """Main Pipecat pipeline."""
 
+    # Shared HTTP session for TTS
+    session = aiohttp.ClientSession()
+
     # ─── STT: Faster-Whisper (local GPU) ────────────────────────
     whisper_model = os.getenv("WHISPER_MODEL", "large-v3")
 
@@ -89,14 +94,13 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         system_instruction=SYSTEM_PROMPT,
     )
 
-    # ─── TTS: Fish Audio S2 Pro ────────────────────────────────
-    tts = FishAudioTTSService(
-        api_key=os.getenv("FISH_API_KEY"),
-        voice_id=os.getenv("FISH_VOICE_ID", ""),
-        model="s2-pro",
-        params=FishAudioTTSService.InputParams(
-            sample_rate=24000,
-        ),
+    # ─── TTS: Self-Hosted Fish Speech S2 Pro ────────────────────
+    fish_url = os.getenv("FISH_SPEECH_URL", "http://localhost:8080")
+
+    tts = FishSpeechSelfHostedTTS(
+        base_url=fish_url,
+        aiohttp_session=session,
+        reference_id=os.getenv("FISH_VOICE_ID", ""),
     )
 
     # ─── Context + Smart Turn v3 ───────────────────────────────
@@ -146,6 +150,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
         await task.cancel()
+        await session.close()
 
     # ─── Run ───────────────────────────────────────────────────
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)

@@ -1,3 +1,4 @@
-pipecat-ai[whisper,openrouter,fish,daily,silero,local-smart-turn]>=0.0.70
+pipecat-ai[whisper,openrouter,daily,silero,local-smart-turn]>=0.0.70
+aiohttp>=3.9.0
 python-dotenv>=1.0
 loguru>=0.7

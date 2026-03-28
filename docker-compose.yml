@@ -1,0 +1,49 @@
+# Fish Speech S2 Pro — Local TTS Server
+# Run: docker compose --profile server up
+#
+# Prerequisites:
+#   1. mkdir -p checkpoints
+#   2. huggingface-cli download fishaudio/s2-pro --local-dir checkpoints/s2-pro
+#      (or download manually from https://huggingface.co/fishaudio/s2-pro)
+
+services:
+  fish-speech-server:
+    image: fishaudio/fish-speech:latest-server-cuda
+    profiles: ["server"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./checkpoints:/app/checkpoints
+    environment:
+      - COMPILE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      python tools/api_server.py
+      --llama-checkpoint-path /app/checkpoints/s2-pro
+      --decoder-checkpoint-path /app/checkpoints/s2-pro/codec.pth
+      --listen 0.0.0.0:8080
+      --half
+
+  fish-speech-webui:
+    image: fishaudio/fish-speech:latest-webui-cuda
+    profiles: ["webui"]
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./references:/app/references
+    environment:
+      - COMPILE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
