@@ -14,13 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
+# Install Python deps (+ modal for auto-deploy)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt modal
 
 # Copy application
 COPY . .
+RUN chmod +x entrypoint.sh
 
 EXPOSE 7860
 
-CMD ["python", "bot.py"]
+ENTRYPOINT ["./entrypoint.sh"]

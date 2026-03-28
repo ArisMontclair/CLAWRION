@@ -54,30 +54,15 @@ When you speak:
 
 ---
 
-## Setup — 4 steps
+## Setup — 3 steps
 
-### Step 1: Deploy GPU server on Modal (one-time, ~10 min)
+### Step 1: Get a Modal token (free, 2 min)
 
-Modal runs the GPU models so your Synology doesn't need a GPU.
+1. Go to [modal.com/signup](https://modal.com/signup) — free account, $30/month GPU credit
+2. Go to [modal.com/settings/tokens](https://modal.com/settings/tokens)
+3. Create a token, copy the ID and secret
 
-```bash
-# Install Modal CLI
-pip install modal
-modal setup
-
-# From this repo directory:
-modal deploy server.py
-```
-
-This deploys **Whisper + Fish Speech** on a single A10G GPU.
-
-**First time:** Downloads ~10GB of model weights. Takes 10-15 minutes.
-**After that:** Instant deploy.
-
-When it finishes, it prints a URL. Save it. Example:
-```
-https://your-org--aris-voice-server.modal.run
-```
+That's it. The Docker container deploys the GPU server automatically on first boot.
 
 ### Step 2: Configure the bot
 
@@ -85,16 +70,19 @@ https://your-org--aris-voice-server.modal.run
 cp .env.example .env
 ```
 
-Edit `.env` — fill in **2 things**:
+Edit `.env` — fill in **3 things**:
 
 ```bash
-# 1. The Modal URL from step 1
-VOICE_SERVER_URL=https://your-org--aris-voice-server.modal.run
+# 1. Your Modal token (from step 1)
+MODAL_TOKEN_ID=your-token-id
+MODAL_TOKEN_SECRET=your-token-secret
 
 # 2. Your OpenClaw gateway (Aris's brain)
 OPENCLAW_GATEWAY_URL=ws://192.168.178.134:18789
 OPENCLAW_GATEWAY_TOKEN=REDACTED
 ```
+
+The first `docker compose up` deploys the GPU server to Modal and grabs the URL automatically. If you already have a Modal deployment, set `VOICE_SERVER_URL` directly instead.
 
 **That's it.** When `OPENCLAW_GATEWAY_URL` is set, all LLM logic goes through OpenClaw. No API keys needed.
 
