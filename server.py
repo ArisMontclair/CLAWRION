@@ -15,8 +15,6 @@ import subprocess
 import modal
 
 # ─── Image ──────────────────────────────────────────────────────
-# Base: CUDA + Python
-# Then layer: Whisper (pip) + Fish Speech (from source)
 image = (
     modal.Image.from_registry(
         "nvidia/cuda:12.4.1-devel-ubuntu22.04",
@@ -43,7 +41,7 @@ image = (
     )
     .run_commands("pip install -e '.[server]'")
     .workdir("/app")
-    .pip_install("fastapi>=0.115.0", "uvicorn")
+    .pip_install("fastapi>=0.115.0", "uvicorn", "httpx>=0.27.0")
 )
 
 # ─── App ────────────────────────────────────────────────────────
@@ -56,6 +54,7 @@ PORT = 8080
 
 # ─── Globals ────────────────────────────────────────────────────
 whisper_model = None
+server_ready = False
 
 
 def load_whisper():
@@ -68,6 +67,55 @@ def load_whisper():
     return whisper_model
 
 
+def download_fish_models():
+    """Download Fish Speech model weights if not cached."""
+    import os
+    if os.path.exists(FISH_CHECKPOINT):
+        print(f"S2 Pro models found at {FISH_CHECKPOINT}")
+        return
+    print("Downloading S2 Pro weights (~8GB, first run)...")
+    subprocess.run(
+        ["huggingface-cli", "download", "fishaudio/s2-pro",
+         "--local-dir", FISH_CHECKPOINT],
+        check=True,
+    )
+    model_volume.commit()
+    print("S2 Pro cached.")
+
+
+def start_fish_server():
+    """Start Fish Speech API server as background process."""
+    cmd = [
+        "python", "/app/fish-speech/tools/api_server.py",
+        "--llama-checkpoint-path", FISH_CHECKPOINT,
+        "--decoder-checkpoint-path", f"{FISH_CHECKPOINT}/codec.pth",
+        "--listen", "127.0.0.1:8081",
+        "--half",
+    ]
+    print("Starting Fish Speech API server on :8081")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc
+
+
+def wait_for_fish_server(timeout=120):
+    """Wait for Fish Speech server to be ready."""
+    import time
+    import httpx
+    print("Waiting for Fish Speech server to be ready...")
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            resp = httpx.get("http://127.0.0.1:8081/health", timeout=2.0)
+            if resp.status_code == 200:
+                print("Fish Speech server ready.")
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+    print(f"WARNING: Fish Speech server not ready after {timeout}s")
+    return False
+
+
 # ─── Single GPU Server ──────────────────────────────────────────
 @app.function(
     gpu="A10G",
@@ -76,36 +124,50 @@ def load_whisper():
     volumes={MODEL_DIR: model_volume},
     memory=16384,
 )
-@modal.web_server(port=PORT, startup_timeout=180)
+@modal.web_server(port=PORT, startup_timeout=300)
 def server():
     """Combined Whisper STT + Fish Speech TTS on one GPU."""
     import os
     import tempfile
+    import threading
     from fastapi import FastAPI, UploadFile, Form, HTTPException
     from fastapi.responses import JSONResponse, Response
+    import httpx
     import uvicorn
 
     web_app = FastAPI(title="Aris Voice Server")
 
-    @web_app.on_event("startup")
-    def startup():
-        # Pre-load Whisper
-        load_whisper()
-        # Check Fish Speech models
-        if not os.path.exists(FISH_CHECKPOINT):
-            print("Downloading S2 Pro weights (~8GB, first run)...")
-            subprocess.run(
-                ["huggingface-cli", "download", "fishaudio/s2-pro",
-                 "--local-dir", FISH_CHECKPOINT],
-                check=True,
-            )
-            model_volume.commit()
-            print("S2 Pro cached.")
+    # ─── Background model loading (non-blocking) ──────────────────
+    def _load_models():
+        global server_ready
+        try:
+            # 1. Download Fish Speech models if needed
+            download_fish_models()
 
-    # ─── STT: Whisper ───────────────────────────────────────────
+            # 2. Start Fish Speech server
+            start_fish_server()
+
+            # 3. Wait for Fish Speech to be ready
+            wait_for_fish_server()
+
+            # 4. Pre-load Whisper
+            load_whisper()
+
+            server_ready = True
+            print("=== All models loaded. Server ready. ===")
+        except Exception as e:
+            print(f"Model loading failed: {e}")
+
+    # Start model loading in background thread so uvicorn starts immediately
+    loader_thread = threading.Thread(target=_load_models, daemon=True)
+    loader_thread.start()
+
+    # ─── STT: Whisper ─────────────────────────────────────────────
     @web_app.post("/v1/transcribe")
     async def transcribe(audio: UploadFile, language: str = Form(default="")):
-        """Transcribe audio to text via Whisper large-v3."""
+        if not server_ready:
+            raise HTTPException(status_code=503, detail="Server still loading models")
+
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(await audio.read())
@@ -134,25 +196,17 @@ def server():
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    # ─── TTS: Fish Speech ──────────────────────────────────────
+    # ─── TTS: Fish Speech ────────────────────────────────────────
     @web_app.post("/v1/tts")
     async def tts(request_data: dict):
-        """Generate speech via Fish Speech S2 Pro.
+        if not server_ready:
+            raise HTTPException(status_code=503, detail="Server still loading models")
 
-        Accepts: {text, format?, reference_id?, temperature?, top_p?}
-        Returns: WAV/PCM audio bytes
-        """
         try:
-            import io
             text = request_data.get("text", "")
             if not text:
                 raise HTTPException(status_code=400, detail="text required")
 
-            # Build request to Fish Speech internal API
-            import ormsgpack
-            from websockets.asyncio.client import connect as ws_connect
-
-            # Use the Fish Speech server's WebSocket API
             payload = {
                 "text": text,
                 "format": request_data.get("format", "wav"),
@@ -165,11 +219,8 @@ def server():
             if request_data.get("reference_id"):
                 payload["reference_id"] = request_data["reference_id"]
 
-            # Call Fish Speech via HTTP POST (local server started by tools/api_server.py)
-            # The Fish Speech API server runs as a background process
             fish_url = "http://127.0.0.1:8081/v1/tts"
 
-            import httpx
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(fish_url, json=payload)
                 if resp.status_code != 200:
@@ -189,18 +240,10 @@ def server():
 
     @web_app.get("/health")
     def health():
-        return {"status": "ok", "services": ["whisper-large-v3", "fish-speech-s2-pro"]}
-
-    # Start Fish Speech API server in background (port 8081, separate from our 8080)
-    fish_cmd = [
-        "python", "/app/fish-speech/tools/api_server.py",
-        "--llama-checkpoint-path", FISH_CHECKPOINT,
-        "--decoder-checkpoint-path", f"{FISH_CHECKPOINT}/codec.pth",
-        "--listen", "127.0.0.1:8081",
-        "--half",
-    ]
-    print("Starting Fish Speech API server on :8081")
-    subprocess.Popen(fish_cmd)
+        return {
+            "status": "ready" if server_ready else "loading",
+            "services": ["whisper-large-v3", "fish-speech-s2-pro"],
+        }
 
     uvicorn.run(web_app, host="0.0.0.0", port=PORT)
 
