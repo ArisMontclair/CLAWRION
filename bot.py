@@ -7,6 +7,9 @@ Open: http://localhost:7860
 """
 
 import os
+import io
+import struct
+import wave
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -15,7 +18,7 @@ import aiohttp
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from loguru import logger
 from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest,
@@ -29,13 +32,14 @@ load_dotenv(override=True)
 VOICE_SERVER_URL = os.getenv("VOICE_SERVER_URL", "http://localhost:8080")
 OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 OPENCLAW_GATEWAY_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
-BOT_SECRET = os.getenv("BOT_SECRET", "")
 BOT_PORT = int(os.getenv("BOT_PORT", "7860"))
 LLM_MODEL = os.getenv("LLM_MODEL", "xiaomi/mimo-v2-pro")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-# ─── Shared HTTP session ────────────────────────────────────────
+# ─── Shared state ───────────────────────────────────────────────
 http_session: aiohttp.ClientSession | None = None
+_active_connections: list = []  # SmallWebRTCTransport instances
+_connections_lock = asyncio.Lock()
 
 
 # ─── OpenClaw Bridge ────────────────────────────────────────────
@@ -231,6 +235,11 @@ async def run_bot(webrtc_connection):
         ),
     )
 
+    # Track this transport for /speak broadcasts
+    async with _connections_lock:
+        _active_connections.append(transport)
+    logger.info(f"Transport registered ({len(_active_connections)} active)")
+
     @transport.event_handler("on_client_connected")
     async def on_connected(transport, connection):
         logger.info("Client connected — ready to talk")
@@ -238,6 +247,10 @@ async def run_bot(webrtc_connection):
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport, connection):
         logger.info("Client disconnected")
+        async with _connections_lock:
+            if transport in _active_connections:
+                _active_connections.remove(transport)
+        logger.info(f"Transport removed ({len(_active_connections)} active)")
         await task.cancel()
 
     runner = PipelineRunner()
@@ -299,6 +312,145 @@ async def health_openclaw():
         return {"status": "connected" if result.returncode == 0 else "error"}
     except Exception:
         return {"status": "unreachable"}
+
+
+# ─── Speak Endpoint (push voice to connected browsers) ──────────
+TTS_SAMPLE_RATE = 24000  # Fish Speech outputs 24kHz
+
+
+def _strip_wav_header(wav_bytes: bytes) -> bytes:
+    """Extract raw PCM data from a WAV file, skipping the header."""
+    # WAV header is at least 44 bytes; find the 'data' chunk
+    idx = wav_bytes.find(b"data")
+    if idx == -1:
+        # No data chunk found — assume 44-byte standard header
+        return wav_bytes[44:]
+    # data chunk: 4 bytes 'data' + 4 bytes chunk size + audio data
+    data_size = struct.unpack_from("<I", wav_bytes, idx + 4)[0]
+    pcm_start = idx + 8
+    return wav_bytes[pcm_start : pcm_start + data_size]
+
+
+def _pad_to_10ms(pcm: bytes, sample_rate: int = TTS_SAMPLE_RATE) -> bytes:
+    """Pad PCM bytes to a multiple of 10ms chunks (required by RawAudioTrack)."""
+    bytes_per_10ms = sample_rate * 2 * 10 // 1000  # 16-bit mono
+    remainder = len(pcm) % bytes_per_10ms
+    if remainder != 0:
+        pcm += b"\x00" * (bytes_per_10ms - remainder)
+    return pcm
+
+
+async def _generate_tts_audio(text: str) -> bytes | None:
+    """Call Modal TTS server and return raw PCM bytes (24kHz, 16-bit mono)."""
+    global http_session
+    if http_session is None:
+        http_session = aiohttp.ClientSession()
+
+    try:
+        payload = {"text": text, "format": "wav"}
+        fish_voice_id = os.getenv("FISH_VOICE_ID", "")
+        if fish_voice_id:
+            payload["reference_id"] = fish_voice_id
+
+        url = f"{VOICE_SERVER_URL}/v1/tts"
+        async with http_session.post(
+            url,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                error = await resp.text()
+                logger.error(f"TTS error ({resp.status}): {error}")
+                return None
+            wav_bytes = await resp.read()
+
+        pcm = _strip_wav_header(wav_bytes)
+        pcm = _pad_to_10ms(pcm)
+        return pcm
+
+    except Exception as e:
+        logger.error(f"TTS generation failed: {e}")
+        return None
+
+
+async def _broadcast_audio(pcm: bytes):
+    """Push raw PCM audio to all connected WebRTC transports."""
+    from pipecat.frames.frames import OutputAudioRawFrame
+
+    frame = OutputAudioRawFrame(
+        audio=pcm,
+        sample_rate=TTS_SAMPLE_RATE,
+        num_channels=1,
+    )
+
+    async with _connections_lock:
+        transports = list(_active_connections)
+
+    for t in transports:
+        try:
+            output = t.output()
+            if hasattr(output, "_client"):
+                await output._client.write_audio_frame(frame)
+            else:
+                logger.warning("Transport output has no _client attribute")
+        except Exception as e:
+            logger.error(f"Failed to push audio to transport: {e}")
+
+
+@app.post("/speak")
+async def speak(request: Request):
+    """Push voice to all connected browsers. No auth required.
+
+    POST /speak with JSON: {"text": "Hello from Aris"}
+    or query param: /speak?text=Hello+from+Aris
+    """
+    # Parse text from body or query param
+    text = ""
+    try:
+        body = await request.json()
+        text = body.get("text", "")
+    except Exception:
+        pass
+    if not text:
+        text = request.query_params.get("text", "")
+
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+
+    async with _connections_lock:
+        count = len(_active_connections)
+
+    if count == 0:
+        return JSONResponse({"error": "no connected browsers"}, status_code=409)
+
+    pcm = await _generate_tts_audio(text)
+    if pcm is None:
+        return JSONResponse({"error": "TTS generation failed"}, status_code=502)
+
+    await _broadcast_audio(pcm)
+    logger.info(f"/speak: pushed [{text[:80]}] to {count} connection(s)")
+    return {"status": "ok", "connections": count}
+
+
+@app.get("/speak")
+async def speak_get(text: str = ""):
+    """GET /speak?text=Hello — convenience endpoint for testing."""
+    if not text:
+        return JSONResponse({"error": "text query param required"}, status_code=400)
+
+    async with _connections_lock:
+        count = len(_active_connections)
+
+    if count == 0:
+        return JSONResponse({"error": "no connected browsers"}, status_code=409)
+
+    pcm = await _generate_tts_audio(text)
+    if pcm is None:
+        return JSONResponse({"error": "TTS generation failed"}, status_code=502)
+
+    await _broadcast_audio(pcm)
+    logger.info(f"/speak: pushed [{text[:80]}] to {count} connection(s)")
+    return {"status": "ok", "connections": count}
 
 
 # ─── Dashboard ──────────────────────────────────────────────────

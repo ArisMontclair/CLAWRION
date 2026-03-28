@@ -85,7 +85,7 @@ https://your-org--aris-voice-server.modal.run
 cp .env.example .env
 ```
 
-Edit `.env` — fill in **3 things**:
+Edit `.env` — fill in **2 things**:
 
 ```bash
 # 1. The Modal URL from step 1
@@ -94,9 +94,6 @@ VOICE_SERVER_URL=https://your-org--aris-voice-server.modal.run
 # 2. Your OpenClaw gateway (Aris's brain)
 OPENCLAW_GATEWAY_URL=ws://192.168.178.134:18789
 OPENCLAW_GATEWAY_TOKEN=REDACTED
-
-# 3. A random secret (for the /speak endpoint)
-BOT_SECRET=whatever-you-want
 ```
 
 **That's it.** When `OPENCLAW_GATEWAY_URL` is set, all LLM logic goes through OpenClaw. No API keys needed.
@@ -184,6 +181,26 @@ You only pay when you're actively talking.
 
 ---
 
+## /speak — Push Voice to Connected Browsers
+
+Aris (or any service) can push voice messages to all connected browsers via the `/speak` endpoint.
+
+```bash
+# POST JSON
+curl -X POST https://your-domain/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hey John, time to wrap up for the night."}'
+
+# Or GET with query param
+curl "https://your-domain/speak?text=Hey+John"
+```
+
+The text gets converted to speech via Fish Speech on Modal, then pushed through the existing WebRTC connection to all connected browsers. No auth token needed — the endpoint is only reachable through Caddy on your network.
+
+**Use cases:** OpenClaw cron jobs pushing coaching nudges, proactive alerts, ambient voice notifications.
+
+---
+
 ## Troubleshooting
 
 | Problem | Cause | Fix |
@@ -192,5 +209,5 @@ You only pay when you're actively talking.
 | No mic access | Browser requires HTTPS | Set up Caddy with a domain, or use Chrome flag for local testing. |
 | Modal GPU shows red | Server URL wrong or models still loading | Check `VOICE_SERVER_URL` in `.env`. Check `/health` endpoint. |
 | OpenClaw shows red | Gateway unreachable from Docker | Check `OPENCLAW_GATEWAY_URL`. Make sure the server is on the same network. |
-| Bot crashes on startup | Missing env vars | Check `.env` — `VOICE_SERVER_URL`, `OPENCLAW_GATEWAY_URL`, and `OPENCLAW_GATEWAY_TOKEN` must be set. |
+| Bot crashes on startup | Missing env vars | Check `.env` — `VOICE_SERVER_URL` must be set. OpenClaw vars needed for bridge mode. |
 | Docker build fails | Network issue | Run `docker compose build --no-cache` |
