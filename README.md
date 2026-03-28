@@ -1,12 +1,12 @@
-# Aris Voice Agent
+# Advanced OpenClaw Modal Fish-S2 Voice Agent (OMVA)
 
-Talk to Aris from any browser. Phone, laptop, anything.
+Talk to OpenClaw from any browser. Phone, laptop, anything.
 
 Open the page → tap Connect → speak → Aris responds with voice.
 
 **What this does:**
-- You talk into your browser → Aris hears you and responds with voice
-- Aris has full access to his brain (OpenClaw) — memory, tools, coaching
+- You talk into your browser → OpenClaw hears you and responds with voice
+- OpenClaw has full access to his brain (OpenClaw) — memory, tools, coaching
 - GPU only runs when you're talking (pay-per-use via Modal)
 - Runs on your Synology via Docker
 
@@ -31,24 +31,24 @@ Open the page → tap Connect → speak → Aris responds with voice.
 
 ```
 You (iPhone browser)
-    ↕  WebRTC (your voice goes up, Aris's voice comes down)
+    ↕  WebRTC (your voice goes up, OpenClaw's voice comes down)
 Synology (this repo)
     ├── Bot (handles WebRTC, pipeline)
     └── Caddy (HTTPS)
     ↕  HTTP (text + audio)
 Modal GPU (cloud, on-demand)
     ├── Whisper → turns your voice into text
-    └── Fish Speech → turns Aris's text into voice
+    └── Fish Speech → turns OpenClaw's text into voice
     ↕  HTTP (text)
-This server (Aris's brain)
+This server (OpenClaw's brain)
     └── OpenClaw → memory, tools, coaching, personality
 ```
 
 When you speak:
 1. Browser sends audio to Synology bot
 2. Bot sends audio to Modal → Whisper turns it into text
-3. Bot sends text to OpenClaw (Aris's brain) on your server
-4. Aris thinks and writes a response
+3. Bot sends text to OpenClaw (OpenClaw's brain) on your server
+4. OpenClaw thinks and writes a response
 5. Bot sends response to Modal → Fish Speech turns it into voice
 6. Voice plays in your browser
 
@@ -125,25 +125,25 @@ WebRTC needs HTTPS for microphone access. Two options:
 
 **Option A: Use Caddy with a domain (recommended)**
 
-Edit `Caddyfile` — replace `aris.yourdomain.com` with your actual domain:
+Edit `Caddyfile` — replace `OpenClaw.yourdomain.com` with your actual domain:
 ```
-aris.yourdomain.com {
+OpenClaw.yourdomain.com {
     reverse_proxy bot:7860
 }
 ```
 
 Point your domain's DNS to your Synology's public IP. Caddy automatically gets an HTTPS certificate via Let's Encrypt.
 
-Then open `https://aris.yourdomain.com` from your iPhone.
+Then open `https://OpenClaw.yourdomain.com` from your iPhone.
 
 **Option B: Quick test without a domain**
 
 For local testing on your LAN, Chrome requires a flag:
 1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
-2. Add `http://your-synology-ip:7860`
+2. Add `http://your-server-ip:7860`
 3. Restart Chrome
 
-Then open `http://your-synology-ip:7860`.
+Then open `http://your-server-ip:7860`.
 
 ---
 
