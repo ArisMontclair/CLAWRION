@@ -20,7 +20,7 @@ image = (
         "nvidia/cuda:12.4.1-devel-ubuntu22.04",
         add_python="3.12",
     )
-    .apt_install("git", "ffmpeg", "build-essential")
+    .apt_install("git", "ffmpeg", "build-essential", "clang", "libportaudio2", "portaudio19-dev")
     # Whisper STT
     .pip_install("faster-whisper>=1.1.0", "python-multipart>=0.0.12")
     # Fish Speech TTS
@@ -252,7 +252,7 @@ def server():
 
 
 # ─── Health endpoint (outside GPU) ──────────────────────────────
-@app.function(image=modal.Image.debian_slim(), timeout=10)
-@modal.web_endpoint(method="GET", label="health")
+@app.function(image=modal.Image.debian_slim().pip_install("fastapi"), timeout=10)
+@modal.fastapi_endpoint(method="GET", label="health")
 def health():
     return {"status": "ok", "services": ["whisper-large-v3", "fish-speech-s2-pro"]}
