@@ -66,6 +66,37 @@ def server():
 
     def _load_models():
         nonlocal whisper_model, fish_proc, server_ready
+
+        # ─── Preflight checks (no GPU yet) ────────────────────
+        # 1. Verify model weights exist
+        llama_ckpt = os.path.join(FISH_CHECKPOINT, "model.ckpt")
+        codec_ckpt = os.path.join(FISH_CHECKPOINT, "codec.pth")
+        if not os.path.exists(llama_ckpt):
+            print(f"FATAL: Fish Speech weights not found at {llama_ckpt}")
+            return
+        if not os.path.exists(codec_ckpt):
+            print(f"FATAL: Fish Speech codec not found at {codec_ckpt}")
+            return
+        print(f"Model weights verified: {FISH_CHECKPOINT}")
+
+        # 2. Verify fish-speech imports cleanly
+        try:
+            import fish_speech
+            print(f"fish-speech {fish_speech.__version__} imported OK")
+        except Exception as e:
+            print(f"FATAL: fish-speech import failed: {e}")
+            return
+
+        # 3. Verify torchaudio works (was previous blocker)
+        try:
+            import torchaudio
+            print(f"torchaudio {torchaudio.__version__} imported OK")
+        except Exception as e:
+            print(f"FATAL: torchaudio import failed: {e}")
+            return
+
+        print("All preflight checks passed. Loading models onto GPU...")
+
         try:
             # 1. Start Fish Speech server
             fish_cmd = [
