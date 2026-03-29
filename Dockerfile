@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python deps (+ modal for auto-deploy)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt modal
+RUN pip install --no-cache-dir -r requirements.txt modal \
+    && pip install --no-cache-dir --force-reinstall opencv-python-headless
 
 # Copy application
 COPY . .
