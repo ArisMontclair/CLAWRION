@@ -24,6 +24,7 @@ image = (
     .run_commands("pip install -e '.[server]'")
     .workdir("/app")
     .pip_install("fastapi", "uvicorn", "httpx")
+    .run_commands("huggingface-cli download fishaudio/s2-pro --local-dir /models/s2-pro")
 )
 
 # ─── App ────────────────────────────────────────────────────────
