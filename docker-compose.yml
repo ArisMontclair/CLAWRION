@@ -6,8 +6,7 @@ services:
     build: .
     container_name: aris-voice-bot
     restart: unless-stopped
-    ports:
-      - "7860:7860"
+    network_mode: host
     env_file: .env
     environment:
       - BOT_PORT=7860
