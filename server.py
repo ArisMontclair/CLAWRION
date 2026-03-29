@@ -29,10 +29,8 @@ image = (
 
 # ─── App ────────────────────────────────────────────────────────
 app = modal.App("aris-voice", image=image)
-model_volume = modal.Volume.from_name("aris-voice-models", create_if_missing=True)
 
-MODEL_DIR = "/models"
-FISH_CHECKPOINT = f"{MODEL_DIR}/s2-pro"
+FISH_CHECKPOINT = "/models/s2-pro"
 PORT = 8080
 
 
@@ -43,7 +41,6 @@ PORT = 8080
     scaledown_window=300,
     min_containers=0,
     max_containers=1,
-    volumes={MODEL_DIR: model_volume},
     memory=16384,
 )
 @modal.web_server(port=PORT, startup_timeout=300)
