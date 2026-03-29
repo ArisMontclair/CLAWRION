@@ -95,3 +95,60 @@ Code changes (server.py) are mounted separately and don't trigger image rebuilds
 `min_containers=1` means the GPU runs 24/7 at ~$0.80/hr = ~$19/day even when nobody is using it.
 
 Use `min_containers=0` (scale to zero) unless you specifically need zero cold starts. The dashboard should poll the lightweight health endpoint (`MODAL_HEALTH_URL`), not the GPU endpoint, to avoid keeping the GPU alive.
+
+---
+
+## 6. Don't deploy in a loop — investigate first
+
+If a deploy fails, DO NOT immediately guess a fix and redeploy. Modal image builds cost money and take minutes.
+
+**Do this instead:**
+1. Read the error message fully
+2. Check the Modal logs: `modal app logs <app-name> --timestamps`
+3. Understand the root cause before touching code
+4. Only deploy when you're confident the fix addresses the actual error
+
+On 2026-03-29, 8+ deploys were done in a loop, each fixing one symptom while missing the root cause (manually managing fish-speech's deps). The correct fix was known from the start: remove the manual dep installs and let fish-speech handle it.
+
+---
+
+## 7. Don't strip system deps to "simplify" the image
+
+If the original image had `apt_install("git", "ffmpeg", "build-essential", "clang", "libportaudio2", "portaudio19-dev")`, don't remove packages thinking they're unnecessary. Packages like `clang` and `portaudio19-dev` are needed at build time for compiling pyaudio. Removing them causes build failures that waste a full image rebuild cycle.
+
+Only remove a system dep if you've verified nothing in the dependency tree needs it.
+
+---
+
+## 8. Modal Volumes shadow image files
+
+If you mount a Volume at `/models` and the image also has files at `/models/s2-pro`, the Volume mount hides the image files. The container sees the Volume contents (which may be empty), not the baked-in files.
+
+**Options:**
+- Don't mount a volume — bake models into the image (simpler, but image rebuilds re-download)
+- Mount the volume at a different path than where image files live
+- Download at runtime into the volume if it's empty (fallback pattern)
+
+---
+
+## 9. Check actual installed versions before debugging runtime errors
+
+If something fails at runtime with an import error or version mismatch, check what's actually installed in the container before guessing:
+
+```bash
+modal app logs <app-name> | grep "Successfully installed"
+```
+
+The install log shows exact versions. Comparing these against what the code expects often reveals the real problem immediately.
+
+---
+
+## 10. Image builds are expensive — cache aggressively
+
+Every image rebuild downloads and installs all packages from scratch. Modal caches layers, but only if the layer definition hasn't changed.
+
+**To minimize rebuilds:**
+- Change server.py code (mounted separately) instead of image layers when possible
+- Put the most stable layers first (base image, apt, stable pip packages)
+- Put changing layers last (model downloads, fish-speech install)
+- Don't change the git clone URL/branch unless you intend to update fish-speech
