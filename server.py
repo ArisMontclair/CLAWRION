@@ -19,7 +19,7 @@ image = (
     )
     .apt_install("git", "ffmpeg", "clang", "libportaudio2", "portaudio19-dev")
     .uv_pip_install("faster-whisper==1.1.1")
-    .run_commands("git clone --depth 1 --branch v2.0.0 https://github.com/fishaudio/fish-speech.git /app/fish-speech")
+    .run_commands("git clone --depth 1 --branch v2.0.0-beta https://github.com/fishaudio/fish-speech.git /app/fish-speech")
     .workdir("/app/fish-speech")
     .run_commands("pip install -e '.[server]'")
     # Patch: fish-speech torchaudio circular import bug with torch 2.8
