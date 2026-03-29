@@ -50,6 +50,7 @@ new = '''        try:
             self.backend = \\\"ffmpeg\\\" if \\\"ffmpeg\\\" in backends else \\\"soundfile\\\"
         except (AttributeError, UnboundLocalError):
             self.backend = \\\"soundfile\\\"'''
+assert old in src, f'Patch target not found in {p}: torchaudio patch failed'
 p.write_text(src.replace(old, new))
 print('Patched reference_loader.py')
 "
@@ -267,7 +268,7 @@ def server():
 
 
 # ─── Lightweight health check (no GPU) ─────────────────────────
-@app.function(image=modal.Image.debian_slim().pip_install("fastapi"), timeout=10)
+@app.function(image=modal.Image.debian_slim().uv_pip_install("fastapi"), timeout=10)
 @modal.fastapi_endpoint(method="GET", label="health")
 def health():
     return {"status": "ok", "services": ["whisper-large-v3", "fish-speech-s2-pro"]}

@@ -262,7 +262,16 @@ async def run_bot(webrtc_connection):
 webrtc_handler = SmallWebRTCRequestHandler()
 
 
-app = FastAPI(title="Aris Voice Agent")
+@asynccontextmanager
+async def lifespan(app):
+    global http_session
+    http_session = aiohttp.ClientSession()
+    yield
+    await http_session.close()
+    await webrtc_handler.close()
+
+
+app = FastAPI(title="Aris Voice Agent", lifespan=lifespan)
 
 
 @app.post("/api/offer")
@@ -461,18 +470,6 @@ async def speak_get(text: str = ""):
 @app.get("/")
 async def dashboard():
     return FileResponse("dashboard.html")
-
-
-@asynccontextmanager
-async def lifespan(app):
-    global http_session
-    http_session = aiohttp.ClientSession()
-    yield
-    await http_session.close()
-    await webrtc_handler.close()
-
-
-app.router.lifespan_context = lifespan
 
 
 # ─── Main ───────────────────────────────────────────────────────
