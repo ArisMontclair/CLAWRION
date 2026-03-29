@@ -79,7 +79,7 @@ MODAL_TOKEN_SECRET=your-token-secret
 
 # 2. Your OpenClaw gateway (Aris's brain)
 OPENCLAW_GATEWAY_URL=ws://192.168.178.134:18789
-OPENCLAW_GATEWAY_TOKEN=REDACTED
+OPENCLAW_GATEWAY_TOKEN=your-token-here
 ```
 
 The first `docker compose up` deploys the GPU server to Modal and grabs the URL automatically. If you already have a Modal deployment, set `VOICE_SERVER_URL` directly instead.
