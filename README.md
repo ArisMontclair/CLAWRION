@@ -1,4 +1,4 @@
-# CLAWRION - Claw Audio Relay for Interactive Operations
+# CLAWRION — Claw Audio Relay for Interactive Operations
 
 Talk to OpenClaw from any browser. Phone, laptop, anything.
 
@@ -6,8 +6,8 @@ Open the page → tap Connect → speak → Aris responds with voice.
 
 **What this does:**
 - You talk into your browser → OpenClaw hears you and responds with voice
-- OpenClaw has full access to his brain (OpenClaw) — memory, tools, coaching
-- GPU only runs when you're talking (pay-per-use via Modal)
+- OpenClaw has full access to his brain — memory, tools, coaching
+- GPU only runs when you're talking (scale-to-zero on Modal)
 - Runs on your Synology via Docker
 
 ---
@@ -16,11 +16,9 @@ Open the page → tap Connect → speak → Aris responds with voice.
 
 | File | Purpose |
 |------|---------|
-| `bot.py` | The web server + voice pipeline. Runs on Synology. |
-| `dashboard.html` | The web page you open in your browser. Dark theme, status lights, log. |
-| `server.py` | GPU server (Modal). Runs Whisper (speech-to-text) + Fish Speech (text-to-speech). |
-| `whisper_stt.py` | Connects bot → Whisper on Modal |
-| `fish_speech_tts.py` | Connects bot → Fish Speech on Modal |
+| `bot.py` | Web server + voice pipeline. Runs on Synology. Handles WebRTC, routes to OpenClaw. |
+| `dashboard.html` | Browser UI. Dark theme, status lights, log. |
+| `server.py` | GPU server on Modal. Whisper STT + Fish Speech TTS. |
 | `Dockerfile` | Builds the bot container (includes OpenClaw CLI) |
 | `docker-compose.yml` | Runs bot + Caddy (HTTPS) on Synology |
 | `Caddyfile` | HTTPS reverse proxy config |
@@ -31,26 +29,68 @@ Open the page → tap Connect → speak → Aris responds with voice.
 
 ```
 You (iPhone browser)
-    ↕  WebRTC (your voice goes up, OpenClaw's voice comes down)
+    ↕  WebRTC (your voice goes up, Aris's voice comes down)
 Synology (this repo)
     ├── Bot (handles WebRTC, pipeline)
     └── Caddy (HTTPS)
     ↕  HTTP (text + audio)
 Modal GPU (cloud, on-demand)
-    ├── Whisper → turns your voice into text
-    └── Fish Speech → turns OpenClaw's text into voice
+    ├── Whisper large-v3 → turns your voice into text
+    └── Fish Speech S2 Pro → turns Aris's text into voice
     ↕  HTTP (text)
 This server (OpenClaw's brain)
-    └── OpenClaw → memory, tools, coaching, personality
+    └── Aris → memory, tools, coaching, personality
 ```
 
 When you speak:
-1. Browser sends audio to Synology bot
+1. Browser sends audio to Synology bot (WebRTC)
 2. Bot sends audio to Modal → Whisper turns it into text
-3. Bot sends text to OpenClaw (OpenClaw's brain) on your server
+3. Bot sends text to OpenClaw on your server
 4. OpenClaw thinks and writes a response
 5. Bot sends response to Modal → Fish Speech turns it into voice
 6. Voice plays in your browser
+
+---
+
+## server.py — Modal GPU Server
+
+The GPU server does two things only: **speech-to-text** and **text-to-speech**. All LLM logic goes through OpenClaw — the GPU server never runs a language model.
+
+### What it launches
+
+On first request, the server:
+1. Runs preflight checks (weights exist, fish-speech imports, torchaudio works)
+2. Starts Fish Speech API server as a subprocess on `127.0.0.1:8081`
+3. Loads Whisper large-v3 onto GPU
+4. Marks ready
+
+If any preflight check fails, the server stays in "loading" state and returns 503 on all endpoints. No silent fallback.
+
+### Image design
+
+The Modal image is intentionally minimal. Fish Speech manages its own dependencies:
+
+```
+nvidia/cuda:12.4.1 + Python 3.12
+  ├── apt: git, ffmpeg
+  ├── pip: faster-whisper
+  ├── clone: fish-speech repo
+  ├── pip: fish-speech [server] extras (manages torch, torchaudio, etc.)
+  ├── pip: fastapi, uvicorn, httpx
+  └── download: Fish Speech S2 Pro weights (~8GB, baked into image)
+```
+
+**Why fish-speech manages its own deps:** Pre-installing torch/torchaudio/sglang separately caused version conflicts. Fish-speech's `[server]` extras declare exact compatible versions. Letting pip resolve everything in one pass avoids mismatches.
+
+### Scaling
+
+- `max_containers=1` — never spin up a second GPU
+- `min_containers=0` — scale to zero when idle (no cost when not talking)
+- `scaledown_window=300` — stay warm 5 minutes after last request to avoid cold starts on short breaks
+
+### Model weights
+
+S2 Pro weights (~8GB) are downloaded during image build and baked in. No volumes, no runtime downloads. If the image is cached, deployment is instant. Rebuilding the image re-downloads weights only if layers before the download step change.
 
 ---
 
@@ -61,8 +101,6 @@ When you speak:
 1. Go to [modal.com/signup](https://modal.com/signup) — free account, $30/month GPU credit
 2. Go to [modal.com/settings/tokens](https://modal.com/settings/tokens)
 3. Create a token, copy the ID and secret
-
-That's it. The Docker container deploys the GPU server automatically on first boot.
 
 ### Step 2: Configure the bot
 
@@ -78,7 +116,7 @@ MODAL_TOKEN_ID=your-token-id
 MODAL_TOKEN_SECRET=your-token-secret
 
 # 2. Your OpenClaw gateway (Aris's brain)
-OPENCLAW_GATEWAY_URL=ws://192.168.178.134:18789
+OPENCLAW_GATEWAY_URL=ws://your-server:18789
 OPENCLAW_GATEWAY_TOKEN=your-token-here
 ```
 
@@ -101,10 +139,10 @@ This uses OpenRouter directly — no memory, no tools, no coaching. Just a raw L
 
 ```bash
 # Copy this repo to Synology
-scp -r . synology:/path/to/aris-voice/
+scp -r . synology:/path/to/CLAWRION/
 
 # On Synology:
-cd /path/to/aris-voice
+cd /path/to/CLAWRION
 docker compose up -d
 ```
 
@@ -152,8 +190,6 @@ When you open the page, you see:
 - **Settings panel** — tap ⚙️ to expand, edit URLs without restarting Docker
 - **Log panel** — timestamped events for troubleshooting
 
-Health checks run automatically every 30 seconds.
-
 ---
 
 ## Cost
@@ -161,11 +197,16 @@ Health checks run automatically every 30 seconds.
 Modal charges per-second for GPU usage:
 
 - **A10G GPU:** ~$0.80/hour
-- **Scale-down:** GPU shuts down 15 seconds after your last request
-- **Typical usage:** ~$0.40/day for 30 minutes of conversation
-- **Cold start:** First request after idle = 10-15 seconds (model loading)
+- **Scale-down:** GPU shuts down 5 minutes after your last request (`scaledown_window=300`)
+- **Idle cost:** $0 when scaled to zero (`min_containers=0`)
+- **Cold start:** First request after idle = 60-120 seconds (loading Whisper + starting Fish Speech)
+- **Warm start:** Instant (within 5 min window)
 
-You only pay when you're actively talking.
+You only pay when the GPU is actually running.
+
+### What NOT to do
+
+- **Don't keep the dashboard tab open with health checks hitting Modal** — each ping keeps the GPU alive. The lightweight `/health` endpoint on Modal runs without GPU, but the bot's health check to the GPU server (`/health` on the A10G) will wake it.
 
 ---
 
@@ -174,16 +215,12 @@ You only pay when you're actively talking.
 Aris (or any service) can push voice messages to all connected browsers via the `/speak` endpoint.
 
 ```bash
-# POST JSON
 curl -X POST https://your-domain/speak \
   -H "Content-Type: application/json" \
   -d '{"text": "Hey John, time to wrap up for the night."}'
-
-# Or GET with query param
-curl "https://your-domain/speak?text=Hey+John"
 ```
 
-The text gets converted to speech via Fish Speech on Modal, then pushed through the existing WebRTC connection to all connected browsers. No auth token needed — the endpoint is only reachable through Caddy on your network.
+The text gets converted to speech via Fish Speech on Modal, then pushed through WebRTC to all connected browsers.
 
 **Use cases:** OpenClaw cron jobs pushing coaching nudges, proactive alerts, ambient voice notifications.
 
@@ -193,9 +230,10 @@ The text gets converted to speech via Fish Speech on Modal, then pushed through 
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| 15 second delay on first message | Modal cold-starting GPU models | Normal. Subsequent messages are instant. |
+| Cold start delay (60-120s) | Modal loading models from image | Normal after idle. Subsequent requests are instant within 5 min. |
 | No mic access | Browser requires HTTPS | Set up Caddy with a domain, or use Chrome flag for local testing. |
-| Modal GPU shows red | Server URL wrong or models still loading | Check `VOICE_SERVER_URL` in `.env`. Check `/health` endpoint. |
+| Modal GPU shows red | Server URL wrong or models still loading | Check `VOICE_SERVER_URL` in `.env`. Wait for cold start. |
+| TTS returns 503 | Fish Speech failed preflight | Check Modal logs: `modal app logs aris-voice`. Look for `FATAL:` messages. |
 | OpenClaw shows red | Gateway unreachable from Docker | Check `OPENCLAW_GATEWAY_URL`. Make sure the server is on the same network. |
-| Bot crashes on startup | Missing env vars | Check `.env` — `VOICE_SERVER_URL` must be set. OpenClaw vars needed for bridge mode. |
-| Docker build fails | Network issue | Run `docker compose build --no-cache` |
+| Bot crashes on startup | Missing env vars | Check `.env` — `VOICE_SERVER_URL` must be set. |
+| High GPU bill | Dashboard kept GPU alive via health checks | Scale to zero works. Don't poll the GPU health endpoint from the browser. |
