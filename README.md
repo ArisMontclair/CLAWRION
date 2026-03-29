@@ -18,7 +18,7 @@ Open the page → tap Connect → speak → OpenClaw responds with voice.
 |------|---------|
 | `bot.py` | Web server + voice pipeline. Runs on Synology. Handles WebRTC, routes to OpenClaw. |
 | `dashboard.html` | Browser UI. Dark theme, status lights, log. |
-| `server.py` | GPU server on Modal. Whisper STT + Fish Speech TTS. |
+| `server.py` | GPU server on Modal. Whisper STT + Orpheus TTS TTS. |
 | `Dockerfile` | Builds the bot container (includes OpenClaw CLI) |
 | `docker-compose.yml` | Runs bot + Caddy (HTTPS) on Synology |
 | `Caddyfile` | HTTPS reverse proxy config |
@@ -35,8 +35,8 @@ Synology (this repo)
     └── Caddy (HTTPS)
     ↕  HTTP (text + audio)
 Modal GPU (cloud, on-demand)
-    ├── Whisper large-v3 → turns your voice into text
-    └── Fish Speech S2 Pro → turns your agent's text into voice
+    ├── Whisper medium → turns your voice into text
+    └── Orpheus TTS → turns your agent's text into voice
     ↕  HTTP (text)
 This server (OpenClaw's brain)
     └── OpenClaw → memory, tools, coaching, personality
@@ -47,7 +47,7 @@ When you speak:
 2. Bot sends audio to Modal → Whisper turns it into text
 3. Bot sends text to OpenClaw on your server
 4. OpenClaw thinks and writes a response
-5. Bot sends response to Modal → Fish Speech turns it into voice
+5. Bot sends response to Modal → Orpheus TTS turns it into voice
 6. Voice plays in your browser
 
 ---
@@ -59,28 +59,28 @@ The GPU server does two things only: **speech-to-text** and **text-to-speech**. 
 ### What it launches
 
 On first request, the server:
-1. Runs preflight checks (weights exist, fish-speech imports, torchaudio works)
-2. Starts Fish Speech API server as a subprocess on `127.0.0.1:8081`
-3. Loads Whisper large-v3 onto GPU
+1. Runs preflight checks (weights exist, orpheus-speech imports, torchaudio works)
+2. Starts Orpheus TTS API server as a subprocess on `127.0.0.1:8081`
+3. Loads Whisper medium onto GPU
 4. Marks ready
 
 If any preflight check fails, the server stays in "loading" state and returns 503 on all endpoints. No silent fallback.
 
 ### Image design
 
-The Modal image is intentionally minimal. Fish Speech manages its own dependencies:
+The Modal image is intentionally minimal. Orpheus TTS manages its own dependencies:
 
 ```
 nvidia/cuda:12.4.1 + Python 3.12
   ├── apt: git, ffmpeg
   ├── pip: faster-whisper
-  ├── clone: fish-speech repo
-  ├── pip: fish-speech [server] extras (manages torch, torchaudio, etc.)
+  ├── clone: orpheus-speech repo
+  ├── pip: orpheus-speech [server] extras (manages torch, torchaudio, etc.)
   ├── pip: fastapi, uvicorn, httpx
-  └── download: Fish Speech S2 Pro weights (~8GB, baked into image)
+  └── download: Orpheus TTS weights (~8GB, baked into image)
 ```
 
-**Why fish-speech manages its own deps:** Pre-installing torch/torchaudio/sglang separately caused version conflicts. Fish-speech's `[server]` extras declare exact compatible versions. Letting pip resolve everything in one pass avoids mismatches.
+**Why orpheus-speech manages its own deps:** Pre-installing torch/torchaudio/sglang separately caused version conflicts. Fish-speech's `[server]` extras declare exact compatible versions. Letting pip resolve everything in one pass avoids mismatches.
 
 ### Scaling
 
@@ -90,7 +90,7 @@ nvidia/cuda:12.4.1 + Python 3.12
 
 ### Model weights
 
-S2 Pro weights (~8GB) are downloaded during image build and baked in. No volumes, no runtime downloads. If the image is cached, deployment is instant. Rebuilding the image re-downloads weights only if layers before the download step change.
+Orpheus weights (~8GB) are downloaded during image build and baked in. No volumes, no runtime downloads. If the image is cached, deployment is instant. Rebuilding the image re-downloads weights only if layers before the download step change.
 
 ---
 
@@ -199,7 +199,7 @@ Modal charges per-second for GPU usage:
 - **A10G GPU:** ~$0.80/hour
 - **Scale-down:** GPU shuts down 1 minute after your last request (`scaledown_window=300`)
 - **Idle cost:** $0 when scaled to zero (`min_containers=0`)
-- **Cold start:** First request after idle = 60-120 seconds (loading Whisper + starting Fish Speech)
+- **Cold start:** First request after idle = 60-120 seconds (loading Whisper + starting Orpheus TTS)
 - **Warm start:** Instant (within 1 min window)
 
 You only pay when the GPU is actually running.
@@ -220,7 +220,7 @@ curl -X POST https://your-domain/speak \
   -d '{"text": "Hey John, time to wrap up for the night."}'
 ```
 
-The text gets converted to speech via Fish Speech on Modal, then pushed through WebRTC to all connected browsers.
+The text gets converted to speech via Orpheus TTS on Modal, then pushed through WebRTC to all connected browsers.
 
 **Use cases:** OpenClaw cron jobs pushing coaching nudges, proactive alerts, ambient voice notifications.
 
@@ -233,7 +233,7 @@ The text gets converted to speech via Fish Speech on Modal, then pushed through 
 | Cold start delay (60-120s) | Modal loading models from image | Normal after idle. Subsequent requests are instant within 5 min. |
 | No mic access | Browser requires HTTPS | Set up Caddy with a domain, or use Chrome flag for local testing. |
 | Modal GPU shows red | Server URL wrong or models still loading | Check `VOICE_SERVER_URL` in `.env`. Wait for cold start. |
-| TTS returns 503 | Fish Speech failed preflight | Check Modal logs: `modal app logs your-agent-voice`. Look for `FATAL:` messages. |
+| TTS returns 503 | Orpheus TTS failed preflight | Check Modal logs: `modal app logs your-agent-voice`. Look for `FATAL:` messages. |
 | OpenClaw shows red | Gateway unreachable from Docker | Check `OPENCLAW_GATEWAY_URL`. Make sure the server is on the same network. |
 | Bot crashes on startup | Missing env vars | Check `.env` — `VOICE_SERVER_URL` must be set. |
 | High GPU bill | Dashboard kept GPU alive via health checks | Scale to zero works. Don't poll the GPU health endpoint from the browser. |
