@@ -105,7 +105,7 @@ async def run_bot(webrtc_connection):
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
-    from fish_speech_tts import FishSpeechSelfHostedTTS
+    from orpheus_tts import OrpheusTTS
     from whisper_stt import WhisperRemoteSTT
 
     global http_session
@@ -128,10 +128,10 @@ async def run_bot(webrtc_connection):
         language="",
     )
 
-    tts = FishSpeechSelfHostedTTS(
+    tts = OrpheusTTS(
         base_url=VOICE_SERVER_URL,
         aiohttp_session=http_session,
-        reference_id=os.getenv("FISH_VOICE_ID", ""),
+        voice=os.getenv("TTS_VOICE", "tara"),
     )
 
     # ─── OpenClaw Bridge Processor ──────────────────────────────
@@ -360,10 +360,7 @@ async def _generate_tts_audio(text: str) -> bytes | None:
         http_session = aiohttp.ClientSession()
 
     try:
-        payload = {"text": text, "format": "wav"}
-        fish_voice_id = os.getenv("FISH_VOICE_ID", "")
-        if fish_voice_id:
-            payload["reference_id"] = fish_voice_id
+        payload = {"text": text, "voice": os.getenv("TTS_VOICE", "tara")}
 
         url = f"{VOICE_SERVER_URL}/v1/tts"
         async with http_session.post(
