@@ -30,6 +30,7 @@ load_dotenv(override=True)
 
 # ─── Config ─────────────────────────────────────────────────────
 VOICE_SERVER_URL = os.getenv("VOICE_SERVER_URL", "http://localhost:8080")
+MODAL_HEALTH_URL = os.getenv("MODAL_HEALTH_URL", "")  # Lightweight health check (no GPU)
 OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 OPENCLAW_GATEWAY_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
 BOT_PORT = int(os.getenv("BOT_PORT", "7860"))
@@ -281,10 +282,13 @@ async def ice_candidate(request: SmallWebRTCPatchRequest):
 # ─── Health Checks ──────────────────────────────────────────────
 @app.get("/api/health/modal")
 async def health_modal():
+    # Use lightweight health endpoint if configured (no GPU cost)
+    # Falls back to GPU server health (which wakes the GPU — avoid polling this)
+    url = MODAL_HEALTH_URL or f"{VOICE_SERVER_URL}/health"
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(
-                f"{VOICE_SERVER_URL}/health",
+                url,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 data = await resp.json()
