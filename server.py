@@ -17,7 +17,7 @@ image = (
         "nvidia/cuda:12.4.1-devel-ubuntu22.04",
         add_python="3.12",
     )
-    .apt_install("git", "ffmpeg")
+    .apt_install("git", "ffmpeg", "clang", "libportaudio2", "portaudio19-dev")
     .pip_install("faster-whisper")
     .run_commands("git clone --depth 1 https://github.com/fishaudio/fish-speech.git /app/fish-speech")
     .workdir("/app/fish-speech")
@@ -68,15 +68,17 @@ def server():
         # ─── Preflight checks (no GPU yet) ────────────────────
         load_stage = "preflight"
         # 1. Verify model weights exist
-        llama_ckpt = os.path.join(FISH_CHECKPOINT, "model.ckpt")
-        codec_ckpt = os.path.join(FISH_CHECKPOINT, "codec.pth")
-        if not os.path.exists(llama_ckpt):
-            print(f"FATAL: Fish Speech weights not found at {llama_ckpt}")
+        if not os.path.exists(FISH_CHECKPOINT):
+            print(f"FATAL: Fish Speech weights dir not found at {FISH_CHECKPOINT}")
             load_stage = "failed: missing weights"
             return
-        if not os.path.exists(codec_ckpt):
-            print(f"FATAL: Fish Speech codec not found at {codec_ckpt}")
+        if not os.path.exists(os.path.join(FISH_CHECKPOINT, "codec.pth")):
+            print(f"FATAL: Fish Speech codec not found at {FISH_CHECKPOINT}/codec.pth")
             load_stage = "failed: missing codec"
+            return
+        if not os.path.exists(os.path.join(FISH_CHECKPOINT, "model.safetensors.index.json")):
+            print(f"FATAL: Fish Speech model index not found at {FISH_CHECKPOINT}/model.safetensors.index.json")
+            load_stage = "failed: missing model index"
             return
         print(f"Model weights verified: {FISH_CHECKPOINT}")
 
