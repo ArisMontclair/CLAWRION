@@ -38,7 +38,7 @@ PORT = 8080
 @app.function(
     gpu="A10G",
     timeout=3600,
-    scaledown_window=300,
+    scaledown_window=60,
     min_containers=0,
     max_containers=1,
     memory=16384,

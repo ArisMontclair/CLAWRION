@@ -86,7 +86,7 @@ nvidia/cuda:12.4.1 + Python 3.12
 
 - `max_containers=1` — never spin up a second GPU
 - `min_containers=0` — scale to zero when idle (no cost when not talking)
-- `scaledown_window=300` — stay warm 5 minutes after last request to avoid cold starts on short breaks
+- `scaledown_window=300` — stay warm 1 minute after last request to avoid cold starts on short breaks
 
 ### Model weights
 
@@ -197,10 +197,10 @@ When you open the page, you see:
 Modal charges per-second for GPU usage:
 
 - **A10G GPU:** ~$0.80/hour
-- **Scale-down:** GPU shuts down 5 minutes after your last request (`scaledown_window=300`)
+- **Scale-down:** GPU shuts down 1 minute after your last request (`scaledown_window=300`)
 - **Idle cost:** $0 when scaled to zero (`min_containers=0`)
 - **Cold start:** First request after idle = 60-120 seconds (loading Whisper + starting Fish Speech)
-- **Warm start:** Instant (within 5 min window)
+- **Warm start:** Instant (within 1 min window)
 
 You only pay when the GPU is actually running.
 
