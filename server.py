@@ -17,7 +17,7 @@ image = (
         add_python="3.12",
     )
     .uv_pip_install("faster-whisper==1.1.1")
-    .uv_pip_install("orpheus-speech==0.1.0", "vllm==0.7.3")
+    .uv_pip_install("orpheus-speech==0.1.0", "vllm==0.8.3")
     .uv_pip_install("fastapi", "uvicorn", "httpx")
 )
 
