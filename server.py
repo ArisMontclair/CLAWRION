@@ -21,6 +21,17 @@ image = (
     .uv_pip_install("fastapi", "uvicorn", "httpx")
 )
 
+# Download Orpheus model during build (needs HF token for gated repo)
+def _download_orpheus():
+    from huggingface_hub import snapshot_download
+    snapshot_download("canopylabs/orpheus-tts-0.1-finetune-prod")
+
+image = image.run_function(
+    _download_orpheus,
+    secrets=[modal.Secret.from_name("huggingface-token")],
+    timeout=600,
+)
+
 # ─── App ────────────────────────────────────────────────────────
 app = modal.App("aris-voice", image=image)
 PORT = 8080
