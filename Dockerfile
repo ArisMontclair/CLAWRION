@@ -12,7 +12,7 @@ COPY --from=openclaw /usr/local/bin/node /usr/local/bin/node
 
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl libxcb1 libx11-6 \
+    curl libxcb1 libx11-6 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps (+ modal for auto-deploy)

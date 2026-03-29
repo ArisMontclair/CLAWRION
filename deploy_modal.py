@@ -38,15 +38,16 @@ def deploy():
 
     print(result.stdout)
 
-    # Extract server URL from output (skip health endpoint, get the actual server URL)
-    # Output has lines like:
+    # Extract server URL from output (skip health endpoint, get the actual GPU server URL).
+    # Modal's deploy output uses tree-drawing characters and may put the URL on the next line:
     #   ├── 🔨 Created web function health => https://xxx--health.modal.run
-    #   └── 🔨 Created web function server =>\nhttps://xxx--aris-voice-server.modal.run
-    url_match = re.search(r"server\s*=>\s*\n?\s*(https://\S+\.modal\.run)", result.stdout)
-    if not url_match:
-        # Fallback: grab last URL (usually the server, not health)
-        all_urls = re.findall(r"https://\S+\.modal\.run", result.stdout)
-        url_match = type('obj', (object,), {'group': lambda self, n=0: all_urls[-1] if all_urls else None})()
+    #   └── 🔨 Created web function server =>
+    #   │   https://xxx--aris-voice-server.modal.run
+    # Strategy: find all modal.run URLs, then pick the one that is NOT the health endpoint.
+    all_urls = re.findall(r"https://\S+\.modal\.run", result.stdout)
+    server_urls = [u for u in all_urls if "--health" not in u]
+    chosen_url = server_urls[0] if server_urls else (all_urls[0] if all_urls else None)
+    url_match = type('obj', (object,), {'group': lambda self, n=0: chosen_url})()
     if url_match:
         url = url_match.group(0)
         print(f"\nVOICE_SERVER_URL={url}")
