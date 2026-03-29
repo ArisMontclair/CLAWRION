@@ -22,9 +22,38 @@ image = (
     .run_commands("git clone --depth 1 https://github.com/fishaudio/fish-speech.git /app/fish-speech")
     .workdir("/app/fish-speech")
     .run_commands("pip install -e '.[server]'")
-    # Patch: fish-speech torchaudio UnboundLocalError with torch 2.8
+    # Patch: fish-speech torchaudio circular import bug with torch 2.8
+    # list_audio_backends() was removed in torchaudio 2.8, the except block
+    # re-imports torchaudio.io which causes a circular import → UnboundLocalError
     .run_commands(
-        "sed -i 's/backends = torchaudio.list_audio_backends()/backends = torchaudio.list_audio_backends() if hasattr(torchaudio, \"list_audio_backends\") else []/' /app/fish-speech/fish_speech/inference_engine/reference_loader.py"
+        """python3 -c "
+import pathlib
+p = pathlib.Path('/app/fish-speech/fish_speech/inference_engine/reference_loader.py')
+src = p.read_text()
+old = '''        try:
+            backends = torchaudio.list_audio_backends()
+            if \\\"ffmpeg\\\" in backends:
+                self.backend = \\\"ffmpeg\\\"
+            else:
+                self.backend = \\\"soundfile\\\"
+        except AttributeError:
+            # torchaudio 2.9+ removed list_audio_backends()
+            # Try ffmpeg first, fallback to soundfile
+            try:
+                import torchaudio.io._load_audio_fileobj  # noqa: F401
+
+                self.backend = \\\"ffmpeg\\\"
+            except (ImportError, ModuleNotFoundError):
+                self.backend = \\\"soundfile\\\"'''
+new = '''        try:
+            backends = torchaudio.list_audio_backends()
+            self.backend = \\\"ffmpeg\\\" if \\\"ffmpeg\\\" in backends else \\\"soundfile\\\"
+        except (AttributeError, UnboundLocalError):
+            self.backend = \\\"soundfile\\\"'''
+p.write_text(src.replace(old, new))
+print('Patched reference_loader.py')
+"
+"""
     )
     .workdir("/app")
     .pip_install("fastapi", "uvicorn", "httpx")
