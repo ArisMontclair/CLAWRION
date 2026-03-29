@@ -17,7 +17,10 @@ image = (
         add_python="3.12",
     )
     .uv_pip_install("faster-whisper==1.1.1")
-    .uv_pip_install("orpheus-speech==0.1.0", "vllm==0.7.3", "transformers==4.48.3")
+    .uv_pip_install("vllm==0.7.3", "transformers==4.48.3")
+    .run_commands(
+        "pip install git+https://github.com/canopyai/Orpheus-TTS.git#subdirectory=orpheus_tts_pypi"
+    )
     .uv_pip_install("fastapi", "uvicorn", "httpx")
 )
 
@@ -64,7 +67,6 @@ def server():
             from orpheus_tts import OrpheusModel
             tts_model = OrpheusModel(
                 model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
-                max_model_len=2048,
             )
             print("Orpheus TTS loaded.")
 
