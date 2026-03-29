@@ -18,6 +18,7 @@ image = (
     )
     .uv_pip_install("faster-whisper==1.1.1")
     .uv_pip_install("vllm==0.7.3", "transformers==4.48.3")
+    .apt_install("git")
     .run_commands(
         "pip install git+https://github.com/canopyai/Orpheus-TTS.git#subdirectory=orpheus_tts_pypi"
     )
