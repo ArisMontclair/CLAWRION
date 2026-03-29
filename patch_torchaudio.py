@@ -1,8 +1,7 @@
-"""Patch fish-speech reference_loader.py to fix torchaudio UnboundLocalError.
+"""Patch fish-speech reference_loader.py to fix torchaudio list_audio_backends().
 
-The except block in __init__ does `import torchaudio.io._load_audio_fileobj`
-which triggers a circular import, leaving `torchaudio` unbound. This replaces
-the entire try/except block with a simple fallback.
+In v2.0.0-beta, the code directly calls torchaudio.list_audio_backends() which
+was removed in torchaudio 2.8. This wraps it in a try/except.
 """
 import pathlib
 import sys
@@ -10,23 +9,15 @@ import sys
 target = pathlib.Path("/app/fish-speech/fish_speech/inference_engine/reference_loader.py")
 src = target.read_text()
 
-old = """        try:
-            backends = torchaudio.list_audio_backends()
-            if "ffmpeg" in backends:
-                self.backend = "ffmpeg"
-            else:
-                self.backend = "soundfile"
-        except AttributeError:
-            # torchaudio 2.9+ removed list_audio_backends()
-            # Try ffmpeg first, fallback to soundfile
-            try:
-                import torchaudio.io._load_audio_fileobj  # noqa: F401
+old = """        # Define the torchaudio backend
+        backends = torchaudio.list_audio_backends()
+        if "ffmpeg" in backends:
+            self.backend = "ffmpeg"
+        else:
+            self.backend = "soundfile\""""
 
-                self.backend = "ffmpeg"
-            except (ImportError, ModuleNotFoundError):
-                self.backend = "soundfile\""""
-
-new = """        try:
+new = """        # Define the torchaudio backend
+        try:
             backends = torchaudio.list_audio_backends()
             self.backend = "ffmpeg" if "ffmpeg" in backends else "soundfile"
         except (AttributeError, UnboundLocalError):
@@ -34,7 +25,10 @@ new = """        try:
 
 if old not in src:
     print(f"ERROR: Patch target not found in {target}")
-    print("The file may have changed upstream. Check the current content.")
+    print("Showing actual content around 'torchaudio':")
+    for i, line in enumerate(src.splitlines(), 1):
+        if 'torchaudio' in line or 'backend' in line.lower():
+            print(f"  {i}: {line}")
     sys.exit(1)
 
 target.write_text(src.replace(old, new))
