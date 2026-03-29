@@ -8,6 +8,7 @@ TTS:     POST /v1/tts (JSON body with "text", optional "voice")
 Health:  GET /health
 """
 
+import os
 import modal
 
 # ─── Image ──────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ PORT = 8080
 
 
 # ─── GPU Server ─────────────────────────────────────────────────
+_hf_secret = modal.Secret.from_dict({"HF_TOKEN": os.environ.get("HF_TOKEN", "")})
+
 @app.function(
     gpu="A10G",
     timeout=3600,
@@ -38,6 +41,7 @@ PORT = 8080
     min_containers=0,
     max_containers=1,
     memory=16384,
+    secrets=[_hf_secret],
 )
 @modal.web_server(port=PORT, startup_timeout=300)
 def server():
