@@ -87,7 +87,9 @@ def server():
             print("=== Server ready ===")
 
         except Exception as e:
+            import traceback
             print(f"Model loading failed: {e}")
+            traceback.print_exc()
             load_stage = f"failed: {e}"
 
     threading.Thread(target=_load_models, daemon=True).start()
